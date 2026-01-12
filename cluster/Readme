@@ -1,0 +1,11 @@
+
+# Preview (dry-run)
+eksctl create cluster -f K8ControlPlane.yaml --dry-run
+
+# Create
+eksctl create cluster -f K8ControlPlane.yaml
+
+# Delete
+eksctl delete cluster -f K8ControlPlane.yaml --wait
+
+

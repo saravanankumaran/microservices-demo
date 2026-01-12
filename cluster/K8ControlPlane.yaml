@@ -1,0 +1,88 @@
+
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: microservices-learning
+  region: ap-south-1
+  version: "1.29"
+
+
+availabilityZones:
+  - ap-south-1a
+  - ap-south-1b
+
+# ----
+# Networking: simplest possible
+# ----
+vpc:
+  nat:
+    gateway: Disable           # No NAT = lower cost
+
+cloudWatch:
+  clusterLogging:
+    enableTypes: []            # Disable control-plane logs to save cost
+
+iam:
+  withOIDC: true               # Required for IRSA & modern addons
+
+# ----
+# Public API endpoint (simplest, cheapest)
+# ----
+privateCluster:
+  enabled: false
+
+# ----
+# Managed Add-ons (minimum required)
+# ----
+addons:
+  - name: vpc-cni
+    version: latest
+  - name: coredns
+    version: latest
+  - name: kube-proxy
+    version: latest
+
+# ----
+# Single, spot-based node group for experiments
+# ----
+managedNodeGroups:
+  - name: learning-spot-ng
+    amiFamily: AmazonLinux2
+    spot: true
+
+    # Graviton = best cost/perf for this demo
+    instanceTypes:
+      - m7g.large
+      - m7g.xlarge
+
+    minSize: 1
+    desiredCapacity: 2
+    maxSize: 4
+
+    volumeSize: 30
+    volumeType: gp3
+    volumeEncrypted: true
+
+    labels:
+      purpose: learning
+      workload: microservices-demo
+      capacity: spot
+      arch: arm64
+
+    tags:
+      environment: lab
+      cost: minimal
+
+    privateNetworking: false   # Public nodes avoid NAT + simplify access
+
+    ssh:
+      enableSsm: true          # Use SSM instead of SSH keys
+
+    updateConfig:
+      maxUnavailable: 1
+
+# ----
+# No Fargate (more expensive for this use case)
+# ----
+fargateProfiles: []
