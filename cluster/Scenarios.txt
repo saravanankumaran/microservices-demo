@@ -1,0 +1,338 @@
+Workload: GoogleCloudPlatform/microservices‑demo (“Online Boutique”) – multi‑language, 11 services, Kubernetes manifests, Kustomize/Helm, and a built‑in load generator (Locust). It runs on any Kubernetes cluster and is ideal for EKS with a few AWS add‑ons (ALB/NLB, IRSA, CSI, Prom/Grafana). 
+EKS ingress: Use the AWS Load Balancer Controller (ALB/NLB) with IRSA. 
+Load testing: Prefer k6 Jobs (thresholds + Prom integration) alongside or replacing Locust. [github.com], [gitmemories.com] [aws.plainenglish.io] [k6.io], [civo.com]
+
+
+A. AWS Foundations (EKS Infrastructure & Primitives)
+1) VPC design: public vs private nodes + NAT
+
+Problem Statement: Decide whether private nodes + NAT + VPC endpoints or public nodes with tight SG egress gives lower cost and equal/better latency for Boutique at target RPS.
+Pattern Identification: Private Egress Minimization
+Design: p95 < 200 ms @ 200 RPS; egress only via intended paths; NAT cost < ₹X/day.
+Deploy: Two clusters (A: private subnets + NAT + endpoints; B: public nodes). Frontend via ALB Ingress. Install AWS LB Controller + IRSA. [aws.plainenglish.io]
+Observe: k6 p95/p99/error; ALB 4xx/5xx; NAT BytesOut/Connections; VPC Flow Logs.
+Tune: Add S3/ECR/STS endpoints, internal ALB; tighten SG egress; IMDSv2 only.
+Failure/Chaos: Remove NAT route or an endpoint and watch error spikes/recovery.
+Signals: p95, error rate, NAT spend, ALB target health.
+Artifacts: eksctl cluster configs; Ingress YAML w/ ALB annotations; CW dashboard.
+Apply to Boutique on EKS: Use repo release/kubernetes-manifests.yaml + add ALB Ingress for frontend; test both clusters. [github.com]
+
+2) IAM & IRSA for controllers
+
+Problem Statement: All controllers (ALB, Cluster Autoscaler) must run with IRSA and least privilege, never inheriting node role.
+Pattern Identification: Workload Identity (IRSA)
+Design: Controller SAs mapped to scoped IAM roles; zero pod access to node creds.
+Deploy: Associate OIDC; create IAM policy/role; annotate SAs (kube-system/aws-load-balancer-controller, cluster-autoscaler). [aws.plainenglish.io]
+Observe: CloudTrail STS by intended SA only; pods fail fast when over‑restricted.
+Tune: Trim actions to minimum; review with Access Analyzer.
+Failure/Chaos: Temporarily remove a required permission; confirm degraded controller, not app.
+Signals: Controller logs (“AccessDenied”), CloudTrail events.
+Artifacts: IAM JSON policies; SA annotations; validation checklist.
+Apply: Follow ALB controller IRSA guide; replicate for CA. [aws.plainenglish.io]
+
+3) Ingress: ALB vs NLB (HTTP vs TCP/gRPC)
+
+Problem Statement: Choose the correct LB and prove 99.9% availability during rollouts/drains.
+Pattern Identification: Ingress Fit
+Design: ALB for HTTP; NLB for raw TCP/gRPC tests; 99.9% availability.
+Deploy: ALB Ingress for frontend; optional NLB Services for gRPC experiments. [aws.plainenglish.io]
+Observe: ALB target health, 502/504 during rollouts; latency distribution.
+Tune: TG deregistration delay, stickiness, cross‑zone.
+Failure/Chaos: Drain nodes; delete/rotate target groups.
+Signals: p95/p99, 5xx rate, TG unhealthy host count.
+Artifacts: Ingress YAML (ALB annotations) + Service (NLB) manifests.
+Apply: Add ALB annotations to Boutique frontend Ingress. [aws.plainenglish.io]
+
+4) Storage: EBS vs EFS
+
+Problem Statement: Decide when EBS (gp3) vs EFS is appropriate for Boutique’s patterns (Redis vs shared artifacts), measuring latency/cost.
+Pattern Identification: Storage Fit
+Design: Redis on EBS; optional EFS for multi‑writer.
+Deploy: Install EBS/EFS CSI; StorageClasses; convert Redis to StatefulSet+PVC. [github.com]
+Observe: Redis latency, PVC binding/reattach, EFS credits.
+Tune: gp3 IOPS/throughput; EFS perf mode/lifecycle.
+Failure/Chaos: Node loss/reattach; EFS credit exhaustion simulation.
+Signals: Disk latency, Redis ops latency, PVC events.
+Artifacts: SC/PVC YAML; Redis StatefulSet patch; Grafana storage panel.
+Apply: Patch redis-cart; keep others stateless.
+
+5) Spot diversification
+
+Problem Statement: Maintain ≥99.9% availability under frequent Spot interruptions.
+Pattern Identification: Spot Diversification with Graceful Loss
+Design: ≥4 types across ≥2 families/AZs; On‑Demand buffer.
+Deploy: Mixed managed nodegroups; capacity‑optimized; aws‑termination‑handler. [docs.aws.amazon.com]
+Observe: Pending pods, CA scale‑ups, recovery time.
+Tune: Overprovisioner, taints/tolerations, min capacity per AZ.
+Failure/Chaos: Trigger simulated spot interruptions; measure time to steady.
+Signals: SLOs during interruptions, CA event timestamps.
+Artifacts: Nodegroup configs; handler DaemonSet; recovery runbook.
+Apply: Drive with k6 step/spike to expose gaps.
+
+6) CloudWatch basics
+
+Problem Statement: Build a minimal CW dashboard correlating infra (ALB, NAT, nodes) with app SLOs; set alarms that catch real breaches.
+Pattern Identification: Dual‑Pane Observability
+Design: CW for infra; Grafana for app SLIs; alert routing.
+Deploy: CW agent/Container Insights; logs to CW; optional metric filters. [docs.aws.amazon.com]
+Observe: Baseline vs rollout/failure windows.
+Tune: Retention, filters/percentiles; alarm thresholds.
+Failure/Chaos: Reduce log volume; ensure rate‑based alarms still fire.
+Signals: ALB latency, NAT bytes, node CPU/mem, app p95/err.
+Artifacts: CW dashboards/alarms JSON; runbooks.
+
+
+B. CKA Essentials (Kubernetes Core Ops)
+7) Deployment vs StatefulSet
+
+Problem Statement: Prove stateless Deployments roll safely while Redis (StatefulSet) preserves identity and data.
+Pattern Identification: Right Kind of Controller
+Design: p95 < 200 ms (stateless), p95 < 250 ms (stateful).
+Deploy: Keep services as Deployments; convert Redis to SS+PVC; probes. [deepwiki.com]
+Observe: Rollout events, pod identity, PVC persistence.
+Tune: maxSurge/unavailable; anti‑affinity; PVC size.
+Failure/Chaos: Delete a pod/PVC; rollback image.
+Signals: 5xx spikes, rollout duration, data persistence.
+Artifacts: SS YAML; probe definitions; rollout timeline.
+
+8) Scheduling controls
+
+Problem Statement: Enforce multi‑AZ spread and priority so no AZ carries >50% and critical services preempt best‑effort.
+Pattern Identification: Topology‑Aware Scheduling
+Design: topologySpreadConstraints, PriorityClasses.
+Deploy: Spread/affinity/taints; overprovisioner. [deepwiki.com]
+Observe: Pod AZ distribution, Pending reasons, latency.
+Tune: Relax constraints or add capacity.
+Failure/Chaos: Cordon one AZ; observe rescheduling.
+Signals: AZ occupancy, p95, Pending time.
+Artifacts: Pod specs; scheduling heatmaps.
+
+9) Probes + graceful termination
+
+Problem Statement: Eliminate 5xx during rollouts by aligning probes, preStop drain, and ALB deregistration.
+Pattern Identification: Graceful Draining
+Design: Zero 5xx on rollout/drain.
+Deploy: gRPC/HTTP probes, preStop; set terminationGracePeriod. [deepwiki.com]
+Observe: Error spikes vs rollout steps.
+Tune: Probe delays/timeouts; deregistration delay.
+Failure/Chaos: SIGTERM tests; forced SIGKILL.
+Signals: 5xx rate, pod readiness transitions.
+Artifacts: Probe YAML; rollout checklist.
+
+10) Requests/Limits & QoS
+
+Problem Statement: Right‑size CPU/memory to meet SLOs while maximizing bin‑packing and avoiding throttling/OOM.
+Pattern Identification: Resource Rightsizing & QoS
+Design: Stable p95; minimal throttle/OOM; improved packing.
+Deploy: Start with repo defaults; iterate per service. [deepwiki.com]
+Observe: CFS throttle, OOMKills, p99 tails.
+Tune: Remove CPU limits for CPU‑bound; memory buffers.
+Failure/Chaos: Stress CPU/mem; watch eviction.
+Signals: container_cpu_cfs_throttled_seconds, OOM events.
+Artifacts: Resource policy YAML; Grafana panel.
+
+11) Storage with CSI (expansion)
+
+Problem Statement: Expand Redis storage online without user impact.
+Pattern Identification: Online Storage Expansion
+Design: Resize with RTO≈0; alert at 80% usage.
+Deploy: EBS CSI with allowVolumeExpansion; grow PVC; FS resize. [docs.aws.amazon.com]
+Observe: Resize logs, latency blips.
+Tune: Pre‑allocate headroom; alerts.
+Failure/Chaos: Node drain + reattach.
+Signals: PVC capacity/usage; resize duration.
+Artifacts: StorageClass/PVC YAML; expansion runbook.
+
+12) NetworkPolicies (zero‑trust)
+
+Problem Statement: Default‑deny east‑west and allow only necessary flows between Boutique services.
+Pattern Identification: Zero‑Trust East‑West
+Design: Namespace isolation + service‑level allow.
+Deploy: Calico/Cilium policies; optional DNS/FQDN egress. [deepwiki.com]
+Observe: Blocked synthetic probes; deny logs.
+Tune: Tighten selectors; egress rules.
+Failure/Chaos: Remove an allow; verify detection.
+Signals: Policy hits, app error localization.
+Artifacts: Policy YAML; test checklist.
+
+13) RBAC & multi‑tenant namespaces
+
+Problem Statement: Prove least‑privilege access—devs deploy only in their ns; read‑only elsewhere.
+Pattern Identification: Least‑Privilege RBAC
+Design: Role sets (viewer/deployer).
+Deploy: Roles/RoleBindings; kubectl auth can-i CI tests. [deepwiki.com]
+Observe: Denied actions; audit logs.
+Tune: Aggregate roles; tighten verbs.
+Failure/Chaos: Attempt escalation.
+Signals: Audit events; denied counts.
+Artifacts: RBAC YAML; policy tests.
+
+14) Troubleshooting drills
+
+Problem Statement: Hit MTTD < 5m, MTTR < 15m on common failure modes.
+Pattern Identification: Troubleshooting Playbooks
+Design: Playbooks per symptom.
+Deploy: Seed faults: bad image, selector, env vars, DNS issues. [github.com]
+Observe: get/describe/events/logs(-p)/exec/port-forward.
+Tune: Remove dead ends; streamline steps.
+Failure/Chaos: ImagePullBackOff, CrashLoopBackOff.
+Signals: Time to identify/fix.
+Artifacts: Runbooks; cheat sheet.
+
+
+C. Reliability & Scalability (SRE Patterns)
+15) HPA fundamentals (CPU/custom)
+
+Problem Statement: Scale 1→10 for frontend/currencyservice within 5 min @ 400 RPS while p95 < 200 ms, first on CPU then custom metrics.
+Pattern Identification: HPA Control Loop
+Design: Stabilization windows; min/max bounds.
+Deploy: HPA (CPU); Prometheus Adapter for custom metrics later. [gitmemories.com]
+Observe: Scale timelines; oscillation; warm‑up.
+Tune: Targets; behavior; initial readiness.
+Failure/Chaos: Sudden spikes; container restarts mid‑scale.
+Signals: HPA status, replica count, p95/p99.
+Artifacts: HPA YAML; scale graphs.
+
+16) Cluster Autoscaler (CA)
+
+Problem Statement: No prolonged Pending under bursts; nodes become ready < 3 min.
+Pattern Identification: Capacity on Demand
+Design: CA with right max nodes; overprovisioner.
+Deploy: Install CA; label/taint groups; set bounds. [docs.aws.amazon.com]
+Observe: Pending reasons; CA events; time‑to‑Ready.
+Tune: Node sizes, max nodes, warm capacity.
+Failure/Chaos: 10× replica step; observe chain HPA→CA.
+Signals: CA event times, pod Ready latency.
+Artifacts: CA deployment; event timeline.
+
+17) VPA + HPA coexistence
+
+Problem Statement: Reduce OOM/throttle via VPA while keeping HPA effective.
+Pattern Identification: VPA for Memory, HPA for CPU
+Design: VPA recommend‑only → memory‑auto with bounds.
+Deploy: VPA CRDs/operator; exclude CPU if HPA uses CPU.
+Observe: Recs vs actual; restarts.
+Tune: Bounds; update policy; eviction strategy.
+Failure/Chaos: Memory spikes; ensure no flapping.
+Signals: OOM rate; VPA updates; latency.
+Artifacts: VPA CRs; dashboards.
+
+18) PDB + surge & upgrades
+
+Problem Statement: 99.9% availability during node drains & rollouts.
+Pattern Identification: Disruption Budgets + Surged Rollouts
+Design: PDB per critical svc; safe surge.
+Deploy: PDB minAvailable + RollingUpdate params. [gitmemories.com]
+Observe: Error spikes vs rollout speed.
+Tune: Surge/unavailable; CA headroom.
+Failure/Chaos: AZ‑by‑AZ drain; measure impact.
+Signals: 5xx rate; rollout duration.
+Artifacts: PDB YAML; drain runbook.
+
+19) Disruption hygiene (reboots/spot)
+
+Problem Statement: Reboots/spot terminations cause no/minimal 5xx via preStop + ALB drain alignment.
+Pattern Identification: Termination Hygiene
+Design: Max unavailable ≤ 1 per service.
+Deploy: kured; termination handler; tune TerminationGracePeriod and ALB deregistration delay. [aws.plainenglish.io]
+Observe: Error blips during terminations.
+Tune: Grace period/dereg delay balance.
+Failure/Chaos: Force drain with short grace; compare outcomes.
+Signals: Target deregister→pod exit alignment; 5xx.
+Artifacts: kured/handler configs; SLO report.
+
+20) Observability stack + SLOs
+
+Problem Statement: Define SLIs/SLOs with burn‑rate alerts; dashboards that correlate traffic/errors/saturation.
+Pattern Identification: SLO‑Driven Observability
+Design: SLO doc; recording rules; multi‑window burn alerts.
+Deploy: kube‑prometheus‑stack; ServiceMonitors; Grafana boards. [github.com]
+Observe: Alert tests; p99 tails; cardinality.
+Tune: Retention/scrape; panel UX.
+Failure/Chaos: Drop Prometheus; evaluate HA/data loss window.
+Signals: Burn rates; golden signals.
+Artifacts: Prom rules; dashboards; runbooks.
+
+21) k6 as Kubernetes Jobs
+
+Problem Statement: Make load reproducible & versioned with k6 Jobs/CronJobs + thresholds.
+Pattern Identification: Load as Code
+Design: Steady/step/spike/soak profiles; thresholds for p95/error.
+Deploy: k6 containers via Jobs; ConfigMaps for scripts; optional remote‑write to Prom. [k6.io], [civo.com]
+Observe: Correlate load → HPA/CA → SLOs.
+Tune: VUs/arrival rate; connection reuse; DNS.
+Failure/Chaos: Inject latency/HTTP errors; retries.
+Signals: http_req_duration; http_req_failed; pod autoscaling.
+Artifacts: Job YAML; k6 scripts; Grafana board.
+
+22) Blue/Green & Canary with ALB
+
+Problem Statement: ≤0.1% extra errors during rollout; rapid rollback.
+Pattern Identification: Progressive Delivery
+Design: Step weights; health gates; rollback criteria.
+Deploy: Two Deployments, separate ALB TargetGroups; weighted routing via Ingress annotations or Argo Rollouts. [aws.plainenglish.io]
+Observe: Error rate vs weight; promotion speed.
+Tune: Weight steps; success windows.
+Failure/Chaos: Inject regression; auto‑rollback triggers.
+Signals: 4xx/5xx, p95, TG health.
+Artifacts: Ingress annotations; rollout CRDs; playbooks.
+
+23) Cost vs performance tuning
+
+Problem Statement: Reduce ₹/RPS by 30% with no SLO breach.
+Pattern Identification: Cost‑Aware Scaling & Packing
+Design: Family mix (c/m/r), Spot %, rightsizing, gp3 tuning.
+Deploy: Adjust nodegroups; arm64 images where possible; resource consolidation. [docs.aws.amazon.com]
+Observe: Throughput, latency, CA churn, node idle.
+Tune: Bin‑packing; log compression; Spot % ↑.
+Failure/Chaos: Remove 30% capacity; ensure graceful degradation.
+Signals: ₹/RPS; p95; error budget burn.
+Artifacts: Cost dashboard (CW + CUR if available); perf reports.
+
+24) Multi‑AZ resilience & zonal failure
+
+Problem Statement: Survive full AZ loss for 10 min with <5% errors.
+Pattern Identification: Zonal Resilience
+Design: Nodegroups per AZ; cross‑zone LB; spreads; state DR.
+Deploy: Topology spreads; ALB cross‑zone; EFS for shared state or Redis DR. [aws.plainenglish.io]
+Observe: AZ drain; rescheduling; HPA/CA response.
+Tune: Pre‑provision minimal capacity per AZ; PDB headroom.
+Failure/Chaos: Block one AZ (cordon/drain); observe SLOs.
+Signals: Error %, time to recovery.
+Artifacts: Topology diagram; failover runbook.
+
+25) Backpressure & overload protection
+
+Problem Statement: Under 5× overload, keep 500s < 0.1% via shedding (429/503), bounded retries, and timeouts.
+Pattern Identification: Load Shedding & Backpressure
+Design: Rate limits; concurrency caps; jitter; queue depth SLOs.
+Deploy: NGINX/Envoy or app gateway limits; retry/timeout budgets; HPA on queue depth.
+Observe: Error mix (429/503 vs 500); p99 tails; recovery curve.
+Tune: Concurrency/limits; retry backoff.
+Failure/Chaos: k6 spike beyond capacity; observe shedding. [k6.io]
+Signals: 500 vs 429/503 ratio; p99; queue depth.
+Artifacts: Gateway configs; SLO dashboards.
+
+26) Security hygiene in‑cluster
+
+Problem Statement: Enforce Pod Security (restricted) and baseline hardening with minimal exceptions.
+Pattern Identification: Pod Security Baseline
+Design: No privileged pods; read‑only root FS; seccomp; image scanning.
+Deploy: Pod Security Admission; Kyverno/Gatekeeper; CI scanning. [github.com]
+Observe: Denied pods; minimal exceptions; pass/fail policy reports.
+Tune: Narrow exceptions with compensating controls.
+Failure/Chaos: Attempt privileged escalation; verify block+alert.
+Signals: Policy violations; CVE findings.
+Artifacts: Policy YAML; exemption registry.
+
+27) Backup & restore (app + cluster state)
+
+Problem Statement: Achieve RPO ≤ 15 min / RTO ≤ 30 min by restoring Boutique into a fresh EKS cluster under load.
+Pattern Identification: Backup/Restore Playbook
+Design: Scheduled Velero backups; encrypted snapshots; tested restore.
+Deploy: Velero for objects; EBS/EFS snapshots for PVCs. [docs.aws.amazon.com]
+Observe: Time to Ready; data integrity; error rate during DR.
+Tune: Snapshot cadence; retention; cross‑account copies.
+Failure/Chaos: Delete boutique ns; restore while k6 runs.
+Signals: RTO clock, SLO adherence, data checksums.
+Artifacts: Backup plans; DR runbooks.

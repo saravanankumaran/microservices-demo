@@ -1,11 +1,11 @@
 
 # Preview (dry-run)
-eksctl create cluster -f K8ControlPlane.yaml --dry-run
+AWS_PROFILE=EKSAdminProfile eksctl create cluster -f K8ControlPlane.yaml --dry-run
 
 # Create
-eksctl create cluster -f K8ControlPlane.yaml
+AWS_PROFILE=EKSAdminProfile eksctl create cluster -f K8ControlPlane.yaml
 
 # Delete
-eksctl delete cluster -f K8ControlPlane.yaml --wait
+AWS_PROFILE=EKSAdminProfile eksctl delete cluster -f K8ControlPlane.yaml --wait
 
 
