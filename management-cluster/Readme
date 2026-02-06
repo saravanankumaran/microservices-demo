@@ -52,7 +52,7 @@ curl -s https://fluxcd.io/install.sh | sudo bash
 # To verify flux installation in local machine
 flux --version
 
-# Install Flux
+# Install Flux in control plane
 flux install
 
 # Install flux via kubectl 
@@ -61,10 +61,26 @@ kubectl apply -f flux-install.yaml
 
 
 flux bootstrap github \
-  --owner=<github-user/org> \
-  --repository=<repo-name> \
+  --owner=saravanankumaran \
+  --repository=microservices-demo \
   --branch=main \
-  --path=clusters/management
+  --path=management-cluster/clusters/management \
+  --personal \
+  --ssh-hostname=ssh.github.com:443
+
+
+# If you already bootstrapped once and have a partial install, clean the secret:
+kubectl delete secret -n flux-system flux-system || true
+
+# Re-run bootstrap with token auth (HTTPS)
+export GITHUB_TOKEN='<your PAT>'
+flux bootstrap github \
+  --owner=saravanankumaran \
+  --repository=microservices-demo \
+  --branch=main \
+  --path=management-cluster/clusters/management \
+  --personal \
+  --token-auth
 
 
 # Install AWS Provider for crossplane

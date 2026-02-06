@@ -1,13 +1,10 @@
-apiVersion: kustomize.toolkit.fluxcd.io/v1
+apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-metadata:
-  name: crossplane
-  namespace: flux-system
-spec:
-  interval: 10m
-  path: "../../infrastructure/crossplane"
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-  wait: true
+resources:
+  # This line makes Flux include your Crossplane manifests (via Kustomize),
+  # the same directory your CRD points at:
+  - ../../infrastructure/crossplane
+
+  # (Optional) If you also want the CRD object to be applied from Git,
+  # add a relative file path to it (see step 3 below).
+  # - ./crossplane-kustomization.yaml
