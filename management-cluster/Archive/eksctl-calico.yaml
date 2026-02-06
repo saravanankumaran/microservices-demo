@@ -1,0 +1,15 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: boutique-calico
+  region: us-west-2
+  version: "1.27"
+addons:
+  - name: aws-calico
+    version: latest
+managedNodeGroups:
+  - name: ng-calico
+    instanceType: m5.large
+    minSize: 2
+    maxSize: 4
+    desiredCapacity: 2

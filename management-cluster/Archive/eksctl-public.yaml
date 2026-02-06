@@ -1,0 +1,30 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: boutique-public
+  region: us-west-2
+  version: "1.27"
+vpc:
+  subnets:
+    public:
+      us-west-2a: { cidr: "10.0.3.0/24" }
+      us-west-2b: { cidr: "10.0.4.0/24" }
+  nat:
+    gateway: Disable
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: false
+  manageSharedNodeSecurityGroupRules: true
+managedNodeGroups:
+  - name: ng-public
+    instanceTypes: ["m5.large", "c5.large"]
+    minSize: 2
+    maxSize: 6
+    desiredCapacity: 3
+    privateNetworking: false
+    subnets:
+      - us-west-2a
+      - us-west-2b
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]

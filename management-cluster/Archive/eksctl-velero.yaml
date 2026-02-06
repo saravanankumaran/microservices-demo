@@ -1,0 +1,22 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: boutique-velero
+  region: us-west-2
+  version: "1.27"
+iam:
+  serviceAccounts:
+    - metadata:
+        name: velero
+        namespace: velero
+      attachPolicyARNs:
+        - arn:aws:iam::123456789012:policy/VeleroBackupPolicy
+managedNodeGroups:
+  - name: ng-velero
+    instanceType: m5.large
+    minSize: 2
+    maxSize: 4
+    desiredCapacity: 2
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]

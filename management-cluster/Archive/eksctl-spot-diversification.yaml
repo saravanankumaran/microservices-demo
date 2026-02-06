@@ -1,0 +1,34 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: boutique-spot-diversification
+  region: us-west-2
+  version: "1.27"
+managedNodeGroups:
+  - name: ng-spot1
+    instanceTypes: ["m5.large", "c5.large"]
+    spot: true
+    minSize: 2
+    maxSize: 6
+    desiredCapacity: 3
+    subnets:
+      - us-west-2a
+  - name: ng-spot2
+    instanceTypes: ["r5.large", "t3.large"]
+    spot: true
+    minSize: 2
+    maxSize: 6
+    desiredCapacity: 3
+    subnets:
+      - us-west-2b
+  - name: ng-ondemand
+    instanceType: m5.large
+    minSize: 1
+    maxSize: 3
+    desiredCapacity: 1
+    subnets:
+      - us-west-2a
+      - us-west-2b
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]

@@ -1,0 +1,31 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: boutique-multi-az
+  region: us-west-2
+  version: "1.27"
+managedNodeGroups:
+  - name: ng-az1
+    instanceType: m5.large
+    minSize: 1
+    maxSize: 3
+    desiredCapacity: 1
+    subnets:
+      - us-west-2a
+  - name: ng-az2
+    instanceType: m5.large
+    minSize: 1
+    maxSize: 3
+    desiredCapacity: 1
+    subnets:
+      - us-west-2b
+  - name: ng-az3
+    instanceType: m5.large
+    minSize: 1
+    maxSize: 3
+    desiredCapacity: 1
+    subnets:
+      - us-west-2c
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]

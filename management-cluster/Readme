@@ -1,0 +1,74 @@
+# AmazonEC2FullAccess
+# AWSCloudFormationFullAccess
+# EksAllAccess
+# IamLimitedAccess
+# https://docs.aws.amazon.com/eks/latest/eksctl/minimum-iam-policies.html
+
+# To create role with permissions required to execute eksctl commands
+terraform apply  -var="account_id=" -var="user_name="
+
+# Preview (dry-run)
+AWS_PROFILE=EKSAdminProfile eksctl create cluster -f K8ControlPlane.yaml --dry-run
+
+# Create
+AWS_PROFILE=EKSAdminProfile eksctl create cluster -f K8ControlPlane.yaml
+
+# Delete
+AWS_PROFILE=EKSAdminProfile eksctl delete cluster -f K8ControlPlane.yaml --wait
+
+# Creating kubeconfig to point the created cluster
+aws eks update-kubeconfig --name microservices-learning
+kubectl get nodes
+
+# Install helm in local machine
+sudo apt-get install curl gpg apt-transport-https --yes
+
+curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey \
+  | gpg --dearmor \
+  | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+
+echo "deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main" \
+  | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+
+sudo apt-get update
+sudo apt-get install helm
+
+# To verify helm installation in local machine
+helm version
+
+# Install crossplane
+helm repo add crossplane-stable https://charts.crossplane.io/stable
+helm install crossplane crossplane-stable/crossplane -n crossplane-system --create-namespace
+
+# Install crossplane via kubectl 
+helm repo add crossplane-stable https://charts.crossplane.io/stable
+helm template crossplane crossplane-stable/crossplane > crossplane.yaml
+kubectl apply -f crossplane.yaml
+
+
+# Install flux cli in local machine
+curl -s https://fluxcd.io/install.sh | sudo bash
+
+# To verify flux installation in local machine
+flux --version
+
+# Install Flux
+flux install
+
+# Install flux via kubectl 
+flux install --export > flux-install.yaml
+kubectl apply -f flux-install.yaml
+
+
+flux bootstrap github \
+  --owner=<github-user/org> \
+  --repository=<repo-name> \
+  --branch=main \
+  --path=clusters/management
+
+
+# Install AWS Provider for crossplane
+kubectl apply -f provider-aws.yaml
+
+
+

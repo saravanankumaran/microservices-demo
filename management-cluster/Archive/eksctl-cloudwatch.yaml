@@ -1,0 +1,16 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: boutique-cloudwatch
+  region: us-west-2
+  version: "1.27"
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]
+  containerInsights: true
+managedNodeGroups:
+  - name: ng-cw
+    instanceType: m5.large
+    minSize: 2
+    maxSize: 4
+    desiredCapacity: 2
